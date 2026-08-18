@@ -31,6 +31,12 @@ function shuffle<T>(arr: T[]): T[] {
 
 export default function SpieltagPage() {
   const [date, setDate] = useState(todayIso());
+
+  useEffect(() => {
+    const fromQuery = new URLSearchParams(window.location.search).get("date");
+    if (fromQuery) setDate(fromQuery);
+  }, []);
+
   const [gameDay, setGameDay] = useState<GameDay | null>(null);
   const [allPlayers, setAllPlayers] = useState<Player[]>([]);
   const [presentIds, setPresentIds] = useState<Set<string>>(new Set());
