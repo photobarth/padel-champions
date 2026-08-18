@@ -352,6 +352,7 @@ export default function SpieltagPage() {
   function resetPlan() {
     const startRound = plan[0]?.round ?? computeNextRound(matches);
     setPlan([emptyRoundPlan(startRound)]);
+    setRoundsToPlan(1);
   }
 
   function playerLabel(id: string) {
