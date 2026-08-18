@@ -68,7 +68,7 @@ export default function RangListePage() {
                 <th className="px-3 py-2 text-center">S</th>
                 <th className="px-3 py-2 text-center">U</th>
                 <th className="px-3 py-2 text-center">N</th>
-                <th className="px-3 py-2 text-center">Tore</th>
+                <th className="px-3 py-2 text-center">Punkte</th>
                 <th className="px-3 py-2 text-center">Diff</th>
                 <th className="px-3 py-2 text-center font-bold">Pkt</th>
               </tr>
