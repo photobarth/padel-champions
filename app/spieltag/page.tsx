@@ -12,6 +12,11 @@ type CourtAssignment = {
   scoreB: string;
 };
 
+type RoundPlan = {
+  round: number;
+  courts: CourtAssignment[];
+};
+
 type MatchWithPlayers = Match & {
   players: (MatchPlayer & { name: string })[];
 };
@@ -29,6 +34,126 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
+function pairKey(a: string, b: string) {
+  return [a, b].sort().join("|");
+}
+
+function emptyCourts(): CourtAssignment[] {
+  return [1, 2].map((court) => ({ court, teamA: [], teamB: [], scoreA: "", scoreB: "" }));
+}
+
+function emptyRoundPlan(round: number): RoundPlan {
+  return { round, courts: emptyCourts() };
+}
+
+function computeNextRound(matches: MatchWithPlayers[]) {
+  return matches.length ? Math.max(...matches.map((m) => m.round)) + 1 : 1;
+}
+
+/** Baut aus den bereits gespeicherten Runden des Tages die Partner- und Pausenhistorie auf. */
+function buildHistory(matches: MatchWithPlayers[], presentIds: string[]) {
+  const partnerCount = new Map<string, number>();
+  const sitOutCount = new Map<string, number>(presentIds.map((id) => [id, 0]));
+
+  const byRound = new Map<number, MatchWithPlayers[]>();
+  matches.forEach((m) => {
+    const list = byRound.get(m.round) ?? [];
+    list.push(m);
+    byRound.set(m.round, list);
+  });
+
+  byRound.forEach((ms) => {
+    const playedIds = new Set<string>();
+    ms.forEach((m) => {
+      const team1 = m.players.filter((p) => p.team === 1).map((p) => p.player_id);
+      const team2 = m.players.filter((p) => p.team === 2).map((p) => p.player_id);
+      [team1, team2].forEach((team) => {
+        team.forEach((id) => playedIds.add(id));
+        if (team.length === 2) {
+          const key = pairKey(team[0], team[1]);
+          partnerCount.set(key, (partnerCount.get(key) ?? 0) + 1);
+        }
+      });
+    });
+    presentIds.forEach((id) => {
+      if (!playedIds.has(id)) sitOutCount.set(id, (sitOutCount.get(id) ?? 0) + 1);
+    });
+  });
+
+  return { partnerCount, sitOutCount };
+}
+
+/**
+ * Plant mehrere Runden im Voraus: verteilt Pausen fair und bildet pro Runde
+ * möglichst Teams, die tagsüber noch nicht zusammengespielt haben.
+ */
+function planRounds(
+  presentIds: string[],
+  startRound: number,
+  count: number,
+  history: { partnerCount: Map<string, number>; sitOutCount: Map<string, number> }
+): RoundPlan[] {
+  const partnerCount = new Map(history.partnerCount);
+  const sitOutCount = new Map(history.sitOutCount);
+  const rounds: RoundPlan[] = [];
+
+  for (let i = 0; i < count; i++) {
+    const roundNumber = startRound + i;
+    const maxActive = Math.min(presentIds.length, 8);
+    const activeCount = maxActive - (maxActive % 4);
+    const sitOutNeeded = presentIds.length - activeCount;
+
+    const byFairness = [...presentIds].sort((a, b) => {
+      const diff = (sitOutCount.get(a) ?? 0) - (sitOutCount.get(b) ?? 0);
+      return diff !== 0 ? diff : Math.random() - 0.5;
+    });
+    const sitters = byFairness.slice(0, sitOutNeeded);
+    const active = shuffle(byFairness.slice(sitOutNeeded));
+    sitters.forEach((id) => sitOutCount.set(id, (sitOutCount.get(id) ?? 0) + 1));
+
+    const used = new Set<string>();
+    const pairs: [string, string][] = [];
+    for (const p of active) {
+      if (used.has(p)) continue;
+      used.add(p);
+      let bestPartner: string | null = null;
+      let bestCount = Infinity;
+      for (const q of active) {
+        if (used.has(q)) continue;
+        const cnt = partnerCount.get(pairKey(p, q)) ?? 0;
+        if (cnt < bestCount) {
+          bestCount = cnt;
+          bestPartner = q;
+        }
+      }
+      if (bestPartner) {
+        used.add(bestPartner);
+        pairs.push([p, bestPartner]);
+        partnerCount.set(pairKey(p, bestPartner), (partnerCount.get(pairKey(p, bestPartner)) ?? 0) + 1);
+      }
+    }
+
+    const shuffledPairs = shuffle(pairs);
+    const courts: CourtAssignment[] = [];
+    for (let j = 0; j + 1 < shuffledPairs.length; j += 2) {
+      courts.push({
+        court: courts.length + 1,
+        teamA: [...shuffledPairs[j]],
+        teamB: [...shuffledPairs[j + 1]],
+        scoreA: "",
+        scoreB: "",
+      });
+    }
+    while (courts.length < 2) {
+      courts.push({ court: courts.length + 1, teamA: [], teamB: [], scoreA: "", scoreB: "" });
+    }
+
+    rounds.push({ round: roundNumber, courts });
+  }
+
+  return rounds;
+}
+
 export default function SpieltagPage() {
   const [date, setDate] = useState(todayIso());
 
@@ -42,10 +167,8 @@ export default function SpieltagPage() {
   const [presentIds, setPresentIds] = useState<Set<string>>(new Set());
   const [newPlayerName, setNewPlayerName] = useState("");
   const [matches, setMatches] = useState<MatchWithPlayers[]>([]);
-  const [courts, setCourts] = useState<CourtAssignment[]>([
-    { court: 1, teamA: [], teamB: [], scoreA: "", scoreB: "" },
-    { court: 2, teamA: [], teamB: [], scoreA: "", scoreB: "" },
-  ]);
+  const [plan, setPlan] = useState<RoundPlan[]>([emptyRoundPlan(1)]);
+  const [roundsToPlan, setRoundsToPlan] = useState(1);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,21 +178,52 @@ export default function SpieltagPage() {
     [allPlayers, presentIds]
   );
 
-  const assignedIds = useMemo(() => {
-    const s = new Set<string>();
-    courts.forEach((c) => {
-      c.teamA.forEach((id) => s.add(id));
-      c.teamB.forEach((id) => s.add(id));
-    });
-    return s;
-  }, [courts]);
-
-  const sittingOut = presentPlayers.filter((p) => !assignedIds.has(p.id));
-
   async function loadPlayers() {
     const { data, error } = await supabase.from("players").select("*").order("name");
     if (error) setError(error.message);
     else setAllPlayers((data as Player[]) ?? []);
+  }
+
+  async function loadMatches(gameDayId: string): Promise<MatchWithPlayers[]> {
+    const { data: matchRows, error: matchError } = await supabase
+      .from("matches")
+      .select("*")
+      .eq("game_day_id", gameDayId)
+      .order("round", { ascending: true })
+      .order("court", { ascending: true });
+    if (matchError) {
+      setError(matchError.message);
+      return [];
+    }
+    const ms = (matchRows as Match[]) ?? [];
+    if (ms.length === 0) {
+      setMatches([]);
+      return [];
+    }
+    const { data: mpRows, error: mpError } = await supabase
+      .from("match_players")
+      .select("*, players(name)")
+      .in(
+        "match_id",
+        ms.map((m) => m.id)
+      );
+    if (mpError) {
+      setError(mpError.message);
+      return [];
+    }
+    const withPlayers: MatchWithPlayers[] = ms.map((m) => ({
+      ...m,
+      players: (mpRows ?? [])
+        .filter((mp: any) => mp.match_id === m.id)
+        .map((mp: any) => ({
+          match_id: mp.match_id,
+          player_id: mp.player_id,
+          team: mp.team,
+          name: mp.players?.name ?? "?",
+        })),
+    }));
+    setMatches(withPlayers);
+    return withPlayers;
   }
 
   async function loadGameDay(forDate: string) {
@@ -110,49 +264,10 @@ export default function SpieltagPage() {
     if (attError) setError(attError.message);
     setPresentIds(new Set((att ?? []).map((a: { player_id: string }) => a.player_id)));
 
-    await loadMatches((gd as GameDay).id);
+    const ms = await loadMatches((gd as GameDay).id);
+    setPlan([emptyRoundPlan(computeNextRound(ms))]);
+    setRoundsToPlan(1);
     setLoading(false);
-  }
-
-  async function loadMatches(gameDayId: string) {
-    const { data: matchRows, error: matchError } = await supabase
-      .from("matches")
-      .select("*")
-      .eq("game_day_id", gameDayId)
-      .order("round", { ascending: true })
-      .order("court", { ascending: true });
-    if (matchError) {
-      setError(matchError.message);
-      return;
-    }
-    const ms = (matchRows as Match[]) ?? [];
-    if (ms.length === 0) {
-      setMatches([]);
-      return;
-    }
-    const { data: mpRows, error: mpError } = await supabase
-      .from("match_players")
-      .select("*, players(name)")
-      .in(
-        "match_id",
-        ms.map((m) => m.id)
-      );
-    if (mpError) {
-      setError(mpError.message);
-      return;
-    }
-    const withPlayers: MatchWithPlayers[] = ms.map((m) => ({
-      ...m,
-      players: (mpRows ?? [])
-        .filter((mp: any) => mp.match_id === m.id)
-        .map((mp: any) => ({
-          match_id: mp.match_id,
-          player_id: mp.player_id,
-          team: mp.team,
-          name: mp.players?.name ?? "?",
-        })),
-    }));
-    setMatches(withPlayers);
   }
 
   useEffect(() => {
@@ -180,11 +295,14 @@ export default function SpieltagPage() {
         const next = new Set(presentIds);
         next.delete(playerId);
         setPresentIds(next);
-        setCourts((cs) =>
-          cs.map((c) => ({
-            ...c,
-            teamA: c.teamA.filter((id) => id !== playerId),
-            teamB: c.teamB.filter((id) => id !== playerId),
+        setPlan((ps) =>
+          ps.map((rp) => ({
+            ...rp,
+            courts: rp.courts.map((c) => ({
+              ...c,
+              teamA: c.teamA.filter((id) => id !== playerId),
+              teamB: c.teamB.filter((id) => id !== playerId),
+            })),
           }))
         );
       }
@@ -224,55 +342,79 @@ export default function SpieltagPage() {
     setBusy(false);
   }
 
-  function randomizeCourts() {
-    const shuffled = shuffle(presentPlayers.map((p) => p.id));
-    const next: CourtAssignment[] = courts.map((c) => ({ ...c, teamA: [], teamB: [], scoreA: "", scoreB: "" }));
-    let i = 0;
-    for (const court of next) {
-      if (i + 4 > shuffled.length) break;
-      court.teamA = [shuffled[i], shuffled[i + 1]];
-      court.teamB = [shuffled[i + 2], shuffled[i + 3]];
-      i += 4;
-    }
-    setCourts(next);
+  function planAction() {
+    if (presentPlayers.length < 4) return;
+    const history = buildHistory(matches, presentPlayers.map((p) => p.id));
+    const startRound = plan[0]?.round ?? computeNextRound(matches);
+    setPlan(planRounds(presentPlayers.map((p) => p.id), startRound, Math.max(1, roundsToPlan), history));
   }
 
-  function clearCourts() {
-    setCourts((cs) => cs.map((c) => ({ ...c, teamA: [], teamB: [], scoreA: "", scoreB: "" })));
+  function resetPlan() {
+    const startRound = plan[0]?.round ?? computeNextRound(matches);
+    setPlan([emptyRoundPlan(startRound)]);
   }
 
   function playerLabel(id: string) {
     return allPlayers.find((p) => p.id === id)?.name ?? "?";
   }
 
-  function assignPlayer(playerId: string, courtIdx: number, team: "A" | "B") {
-    setCourts((cs) =>
-      cs.map((c, idx) => {
-        // remove from every slot first
-        const cleaned = { ...c, teamA: c.teamA.filter((id) => id !== playerId), teamB: c.teamB.filter((id) => id !== playerId) };
-        if (idx !== courtIdx) return cleaned;
-        if (team === "A" && cleaned.teamA.length < 2) cleaned.teamA = [...cleaned.teamA, playerId];
-        if (team === "B" && cleaned.teamB.length < 2) cleaned.teamB = [...cleaned.teamB, playerId];
-        return cleaned;
+  function assignPlayer(roundIndex: number, playerId: string, courtIdx: number, team: "A" | "B") {
+    setPlan((prev) =>
+      prev.map((rp, ri) => {
+        if (ri !== roundIndex) return rp;
+        const courts = rp.courts.map((c) => ({
+          ...c,
+          teamA: c.teamA.filter((id) => id !== playerId),
+          teamB: c.teamB.filter((id) => id !== playerId),
+        }));
+        const target = courts[courtIdx];
+        if (team === "A" && target.teamA.length < 2) target.teamA = [...target.teamA, playerId];
+        if (team === "B" && target.teamB.length < 2) target.teamB = [...target.teamB, playerId];
+        return { ...rp, courts };
       })
     );
   }
 
-  function unassignPlayer(playerId: string) {
-    setCourts((cs) =>
-      cs.map((c) => ({
-        ...c,
-        teamA: c.teamA.filter((id) => id !== playerId),
-        teamB: c.teamB.filter((id) => id !== playerId),
-      }))
+  function unassignPlayer(roundIndex: number, playerId: string) {
+    setPlan((prev) =>
+      prev.map((rp, ri) =>
+        ri !== roundIndex
+          ? rp
+          : {
+              ...rp,
+              courts: rp.courts.map((c) => ({
+                ...c,
+                teamA: c.teamA.filter((id) => id !== playerId),
+                teamB: c.teamB.filter((id) => id !== playerId),
+              })),
+            }
+      )
     );
   }
 
-  const nextRound = matches.length ? Math.max(...matches.map((m) => m.round)) + 1 : 1;
+  function updateScore(roundIndex: number, courtIdx: number, field: "scoreA" | "scoreB", value: string) {
+    setPlan((prev) =>
+      prev.map((rp, ri) =>
+        ri !== roundIndex
+          ? rp
+          : { ...rp, courts: rp.courts.map((c, ci) => (ci !== courtIdx ? c : { ...c, [field]: value })) }
+      )
+    );
+  }
 
-  async function saveRound() {
+  function assignedIdsForRound(rp: RoundPlan) {
+    const s = new Set<string>();
+    rp.courts.forEach((c) => {
+      c.teamA.forEach((id) => s.add(id));
+      c.teamB.forEach((id) => s.add(id));
+    });
+    return s;
+  }
+
+  async function saveOneRound(roundIndex: number) {
     if (!gameDay) return;
-    const readyCourts = courts.filter(
+    const rp = plan[roundIndex];
+    const readyCourts = rp.courts.filter(
       (c) => c.teamA.length === 2 && c.teamB.length === 2 && c.scoreA !== "" && c.scoreB !== ""
     );
     if (readyCourts.length === 0) {
@@ -286,7 +428,7 @@ export default function SpieltagPage() {
         .from("matches")
         .insert({
           game_day_id: gameDay.id,
-          round: nextRound,
+          round: rp.round,
           court: c.court,
           team1_score: Number(c.scoreA),
           team2_score: Number(c.scoreB),
@@ -309,7 +451,10 @@ export default function SpieltagPage() {
         return;
       }
     }
-    clearCourts();
+    setPlan((prev) => {
+      const next = prev.filter((_, i) => i !== roundIndex);
+      return next.length === 0 ? [emptyRoundPlan(rp.round + 1)] : next;
+    });
     await loadMatches(gameDay.id);
     setBusy(false);
   }
@@ -393,24 +538,36 @@ export default function SpieltagPage() {
             </div>
             <p className="mt-2 text-sm text-gray-500">
               {presentPlayers.length} Spieler heute dabei
-              {presentPlayers.length % 2 === 1 && " – bei ungerader Anzahl muss pro Runde mind. 1 Person aussetzen."}
+              {presentPlayers.length % 4 !== 0 &&
+                presentPlayers.length >= 4 &&
+                " – nicht alle können in jeder Runde spielen, es muss immer mind. 1 Person pro Runde aussetzen."}
             </p>
           </section>
 
-          {/* Rundenerfassung */}
+          {/* Rundenplanung */}
           <section>
-            <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Runde {nextRound} erfassen</h2>
-              <div className="flex gap-2">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-lg font-semibold">Runden planen</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-1 text-xs text-gray-500">
+                  Anzahl Runden
+                  <input
+                    type="number"
+                    min={1}
+                    value={roundsToPlan}
+                    onChange={(e) => setRoundsToPlan(Math.max(1, Number(e.target.value) || 1))}
+                    className="w-16 rounded-md border px-2 py-1 text-center text-sm"
+                  />
+                </label>
                 <button
-                  onClick={randomizeCourts}
+                  onClick={planAction}
                   disabled={presentPlayers.length < 4 || busy}
                   className="rounded-md border border-court px-3 py-1.5 text-xs font-medium text-court hover:bg-court-light disabled:opacity-50"
                 >
-                  🎲 Teams zufällig mischen
+                  🎲 Teams mischen
                 </button>
                 <button
-                  onClick={clearCourts}
+                  onClick={resetPlan}
                   disabled={busy}
                   className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
                 >
@@ -418,84 +575,93 @@ export default function SpieltagPage() {
                 </button>
               </div>
             </div>
+            <p className="mb-3 text-xs text-gray-400">
+              „Teams mischen" berücksichtigt bereits gespielte Runden von heute und versucht, pro Runde
+              möglichst neue Team-Partner zu bilden sowie Pausen fair zu verteilen.
+            </p>
 
             {presentPlayers.length < 4 ? (
               <p className="text-sm text-gray-500">Mindestens 4 anwesende Spieler nötig, um eine Runde zu erfassen.</p>
             ) : (
-              <>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  {courts.map((c, idx) => (
-                    <div key={c.court} className="rounded-lg border bg-white p-3 shadow-sm">
-                      <p className="mb-2 text-sm font-semibold text-court">Platz {c.court}</p>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <p className="mb-1 text-xs font-medium text-gray-500">Team A</p>
-                          {[0, 1].map((slot) => (
-                            <PlayerSlot
-                              key={slot}
-                              value={c.teamA[slot]}
-                              options={presentPlayers}
-                              takenIds={assignedIds}
-                              onSelect={(id) => assignPlayer(id, idx, "A")}
-                              onClear={() => c.teamA[slot] && unassignPlayer(c.teamA[slot])}
-                              label={c.teamA[slot] ? playerLabel(c.teamA[slot]) : undefined}
-                            />
-                          ))}
-                        </div>
-                        <div>
-                          <p className="mb-1 text-xs font-medium text-gray-500">Team B</p>
-                          {[0, 1].map((slot) => (
-                            <PlayerSlot
-                              key={slot}
-                              value={c.teamB[slot]}
-                              options={presentPlayers}
-                              takenIds={assignedIds}
-                              onSelect={(id) => assignPlayer(id, idx, "B")}
-                              onClear={() => c.teamB[slot] && unassignPlayer(c.teamB[slot])}
-                              label={c.teamB[slot] ? playerLabel(c.teamB[slot]) : undefined}
-                            />
-                          ))}
-                        </div>
+              <div className="space-y-6">
+                {plan.map((rp, roundIndex) => {
+                  const assignedIds = assignedIdsForRound(rp);
+                  const sittingOut = presentPlayers.filter((p) => !assignedIds.has(p.id));
+                  return (
+                    <div key={rp.round} className="rounded-xl border-2 border-court-light p-3">
+                      <h3 className="mb-2 text-sm font-bold text-court">Runde {rp.round}</h3>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        {rp.courts.map((c, courtIdx) => (
+                          <div key={c.court} className="rounded-lg border bg-white p-3 shadow-sm">
+                            <p className="mb-2 text-sm font-semibold text-court">Platz {c.court}</p>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <p className="mb-1 text-xs font-medium text-gray-500">Team A</p>
+                                {[0, 1].map((slot) => (
+                                  <PlayerSlot
+                                    key={slot}
+                                    value={c.teamA[slot]}
+                                    options={presentPlayers}
+                                    takenIds={assignedIds}
+                                    onSelect={(id) => assignPlayer(roundIndex, id, courtIdx, "A")}
+                                    onClear={() => c.teamA[slot] && unassignPlayer(roundIndex, c.teamA[slot])}
+                                    label={c.teamA[slot] ? playerLabel(c.teamA[slot]) : undefined}
+                                  />
+                                ))}
+                              </div>
+                              <div>
+                                <p className="mb-1 text-xs font-medium text-gray-500">Team B</p>
+                                {[0, 1].map((slot) => (
+                                  <PlayerSlot
+                                    key={slot}
+                                    value={c.teamB[slot]}
+                                    options={presentPlayers}
+                                    takenIds={assignedIds}
+                                    onSelect={(id) => assignPlayer(roundIndex, id, courtIdx, "B")}
+                                    onClear={() => c.teamB[slot] && unassignPlayer(roundIndex, c.teamB[slot])}
+                                    label={c.teamB[slot] ? playerLabel(c.teamB[slot]) : undefined}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                            <div className="mt-3 flex items-center justify-center gap-2">
+                              <input
+                                type="number"
+                                min={0}
+                                value={c.scoreA}
+                                onChange={(e) => updateScore(roundIndex, courtIdx, "scoreA", e.target.value)}
+                                className="w-14 rounded-md border px-2 py-1 text-center text-sm"
+                              />
+                              <span className="text-sm text-gray-400">:</span>
+                              <input
+                                type="number"
+                                min={0}
+                                value={c.scoreB}
+                                onChange={(e) => updateScore(roundIndex, courtIdx, "scoreB", e.target.value)}
+                                className="w-14 rounded-md border px-2 py-1 text-center text-sm"
+                              />
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                      <div className="mt-3 flex items-center justify-center gap-2">
-                        <input
-                          type="number"
-                          min={0}
-                          value={c.scoreA}
-                          onChange={(e) =>
-                            setCourts((cs) => cs.map((x, i) => (i === idx ? { ...x, scoreA: e.target.value } : x)))
-                          }
-                          className="w-14 rounded-md border px-2 py-1 text-center text-sm"
-                        />
-                        <span className="text-sm text-gray-400">:</span>
-                        <input
-                          type="number"
-                          min={0}
-                          value={c.scoreB}
-                          onChange={(e) =>
-                            setCourts((cs) => cs.map((x, i) => (i === idx ? { ...x, scoreB: e.target.value } : x)))
-                          }
-                          className="w-14 rounded-md border px-2 py-1 text-center text-sm"
-                        />
-                      </div>
+
+                      {sittingOut.length > 0 && (
+                        <p className="mt-3 text-sm text-gray-500">
+                          Pause diese Runde: {sittingOut.map((p) => p.name).join(", ")}
+                        </p>
+                      )}
+
+                      <button
+                        onClick={() => saveOneRound(roundIndex)}
+                        disabled={busy}
+                        className="mt-4 w-full rounded-md bg-court py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                      >
+                        Runde {rp.round} speichern
+                      </button>
                     </div>
-                  ))}
-                </div>
-
-                {sittingOut.length > 0 && (
-                  <p className="mt-3 text-sm text-gray-500">
-                    Pause diese Runde: {sittingOut.map((p) => p.name).join(", ")}
-                  </p>
-                )}
-
-                <button
-                  onClick={saveRound}
-                  disabled={busy}
-                  className="mt-4 w-full rounded-md bg-court py-2.5 text-sm font-semibold text-white disabled:opacity-50"
-                >
-                  Runde {nextRound} speichern
-                </button>
-              </>
+                  );
+                })}
+              </div>
             )}
           </section>
 
