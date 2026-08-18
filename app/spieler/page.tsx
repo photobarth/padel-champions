@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { useAdmin } from "@/lib/useAdmin";
 import type { Player } from "@/lib/types";
 
 export default function SpielerPage() {
+  const { isAdmin } = useAdmin();
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
   const [newName, setNewName] = useState("");
@@ -59,22 +61,24 @@ export default function SpielerPage() {
         <p className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</p>
       )}
 
-      <div className="mb-6 flex gap-2">
-        <input
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && addPlayer()}
-          placeholder="Neuer Spieler…"
-          className="flex-1 rounded-md border px-3 py-2 text-sm"
-        />
-        <button
-          onClick={addPlayer}
-          disabled={busy || !newName.trim()}
-          className="rounded-md bg-court px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-        >
-          Hinzufügen
-        </button>
-      </div>
+      {isAdmin && (
+        <div className="mb-6 flex gap-2">
+          <input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addPlayer()}
+            placeholder="Neuer Spieler…"
+            className="flex-1 rounded-md border px-3 py-2 text-sm"
+          />
+          <button
+            onClick={addPlayer}
+            disabled={busy || !newName.trim()}
+            className="rounded-md bg-court px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          >
+            Hinzufügen
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <p className="text-sm text-gray-500">Lade Spieler…</p>
@@ -83,17 +87,19 @@ export default function SpielerPage() {
           {players.map((p) => (
             <li key={p.id} className="flex items-center justify-between px-4 py-3">
               <span className={p.active ? "" : "text-gray-400 line-through"}>{p.name}</span>
-              <button
-                onClick={() => toggleActive(p)}
-                disabled={busy}
-                className={`rounded-md px-3 py-1 text-xs font-medium ${
-                  p.active
-                    ? "border border-gray-300 text-gray-600 hover:bg-gray-50"
-                    : "border border-court text-court hover:bg-court-light"
-                }`}
-              >
-                {p.active ? "Deaktivieren" : "Aktivieren"}
-              </button>
+              {isAdmin && (
+                <button
+                  onClick={() => toggleActive(p)}
+                  disabled={busy}
+                  className={`rounded-md px-3 py-1 text-xs font-medium ${
+                    p.active
+                      ? "border border-gray-300 text-gray-600 hover:bg-gray-50"
+                      : "border border-court text-court hover:bg-court-light"
+                  }`}
+                >
+                  {p.active ? "Deaktivieren" : "Aktivieren"}
+                </button>
+              )}
             </li>
           ))}
         </ul>

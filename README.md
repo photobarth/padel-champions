@@ -41,8 +41,28 @@ Benötigte Umgebungsvariablen (siehe `.env.local.example`):
 
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY` (publishable key, kein Service-Role-Key!)
+- `ADMIN_KEY` (serverseitiges Secret für den Admin-Link, siehe unten)
 
-### 3. Deployment
+### 3. Admin-Zugriff
+
+Erfassen (Anwesenheit, Runden, Spieler hinzufügen/deaktivieren, Matches
+löschen) ist nur im Admin-Modus möglich. Alle anderen Besucher sehen die
+Seiten nur lesend.
+
+Der Admin-Modus wird über einen einmaligen Link aktiviert:
+
+```
+https://rivellapadelchampions.photobarth.ch/api/admin?key=<ADMIN_KEY>
+```
+
+Der Aufruf setzt ein Cookie im Browser des Geräts (1 Jahr gültig) – der
+eigentliche Schlüssel wird dabei nur serverseitig geprüft und taucht nie im
+Browser-Code auf. Über den Link "beenden" neben "✏️ Admin-Modus" in der
+Navigation lässt sich der Modus auf diesem Gerät wieder deaktivieren.
+Diesen Link nur an die Personen weitergeben, die erfassen dürfen (z. B.
+Nicole und Nadine B.) – jede von ihnen öffnet ihn einmal auf ihrem Gerät.
+
+### 4. Deployment
 
 Deployment erfolgt über Vercel. Die Umgebungsvariablen müssen im
 Vercel-Projekt hinterlegt werden. Anschliessend `rivellapadelchampions.photobarth.ch`

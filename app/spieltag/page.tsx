@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { useAdmin } from "@/lib/useAdmin";
 import type { GameDay, Match, MatchPlayer, Player } from "@/lib/types";
 
 type CourtAssignment = {
@@ -155,6 +156,7 @@ function planRounds(
 }
 
 export default function SpieltagPage() {
+  const { isAdmin } = useAdmin();
   const [date, setDate] = useState(todayIso());
 
   useEffect(() => {
@@ -242,6 +244,14 @@ export default function SpieltagPage() {
     }
 
     if (!gd) {
+      if (!isAdmin) {
+        setGameDay(null);
+        setPresentIds(new Set());
+        setMatches([]);
+        setPlan([emptyRoundPlan(1)]);
+        setLoading(false);
+        return;
+      }
       const { data: created, error: createError } = await supabase
         .from("game_days")
         .insert({ play_date: forDate })
@@ -277,10 +287,10 @@ export default function SpieltagPage() {
   useEffect(() => {
     loadGameDay(date);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date]);
+  }, [date, isAdmin]);
 
   async function toggleAttendance(playerId: string) {
-    if (!gameDay) return;
+    if (!gameDay || !isAdmin) return;
     setBusy(true);
     setError(null);
     const isPresent = presentIds.has(playerId);
@@ -318,7 +328,7 @@ export default function SpieltagPage() {
 
   async function addNewPlayer() {
     const name = newPlayerName.trim();
-    if (!name || !gameDay) return;
+    if (!name || !gameDay || !isAdmin) return;
     setBusy(true);
     setError(null);
     const { data, error } = await supabase
@@ -413,7 +423,7 @@ export default function SpieltagPage() {
   }
 
   async function saveOneRound(roundIndex: number) {
-    if (!gameDay) return;
+    if (!gameDay || !isAdmin) return;
     const rp = plan[roundIndex];
     const readyCourts = rp.courts.filter(
       (c) => c.teamA.length === 2 && c.teamB.length === 2 && c.scoreA !== "" && c.scoreB !== ""
@@ -461,7 +471,7 @@ export default function SpieltagPage() {
   }
 
   async function deleteMatch(matchId: string) {
-    if (!gameDay) return;
+    if (!gameDay || !isAdmin) return;
     setBusy(true);
     const { error } = await supabase.from("matches").delete().eq("id", matchId);
     if (error) setError(error.message);
@@ -495,6 +505,8 @@ export default function SpieltagPage() {
 
       {loading ? (
         <p className="text-sm text-gray-500">Lade…</p>
+      ) : !gameDay ? (
+        <p className="text-sm text-gray-500">Für diesen Tag wurden noch keine Daten erfasst.</p>
       ) : (
         <>
           {/* Anwesenheit */}
@@ -505,7 +517,18 @@ export default function SpieltagPage() {
                 .filter((p) => p.active || presentIds.has(p.id))
                 .map((p) => {
                   const present = presentIds.has(p.id);
-                  return (
+                  const pill = (
+                    <span
+                      className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
+                        present
+                          ? "border-court bg-court text-white"
+                          : "border-gray-300 text-gray-600"
+                      }`}
+                    >
+                      {p.name}
+                    </span>
+                  );
+                  return isAdmin ? (
                     <button
                       key={p.id}
                       onClick={() => toggleAttendance(p.id)}
@@ -518,25 +541,29 @@ export default function SpieltagPage() {
                     >
                       {p.name}
                     </button>
+                  ) : (
+                    <span key={p.id}>{pill}</span>
                   );
                 })}
             </div>
-            <div className="flex gap-2">
-              <input
-                value={newPlayerName}
-                onChange={(e) => setNewPlayerName(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && addNewPlayer()}
-                placeholder="Kurzfristiger neuer Spieler…"
-                className="flex-1 rounded-md border px-3 py-2 text-sm"
-              />
-              <button
-                onClick={addNewPlayer}
-                disabled={busy || !newPlayerName.trim()}
-                className="rounded-md bg-court px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-              >
-                + Hinzufügen &amp; anmelden
-              </button>
-            </div>
+            {isAdmin && (
+              <div className="flex gap-2">
+                <input
+                  value={newPlayerName}
+                  onChange={(e) => setNewPlayerName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && addNewPlayer()}
+                  placeholder="Kurzfristiger neuer Spieler…"
+                  className="flex-1 rounded-md border px-3 py-2 text-sm"
+                />
+                <button
+                  onClick={addNewPlayer}
+                  disabled={busy || !newPlayerName.trim()}
+                  className="rounded-md bg-court px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                >
+                  + Hinzufügen &amp; anmelden
+                </button>
+              </div>
+            )}
             <p className="mt-2 text-sm text-gray-500">
               {presentPlayers.length} Spieler heute dabei
               {presentPlayers.length % 4 !== 0 &&
@@ -546,6 +573,7 @@ export default function SpieltagPage() {
           </section>
 
           {/* Rundenplanung */}
+          {isAdmin && (
           <section>
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-lg font-semibold">Runden planen</h2>
@@ -665,6 +693,7 @@ export default function SpieltagPage() {
               </div>
             )}
           </section>
+          )}
 
           {/* Bisherige Runden */}
           <section>
@@ -686,13 +715,15 @@ export default function SpieltagPage() {
                             <span className="flex-1 px-3">
                               {team1.join(" & ")} <b>{m.team1_score}</b> : <b>{m.team2_score}</b> {team2.join(" & ")}
                             </span>
-                            <button
-                              onClick={() => deleteMatch(m.id)}
-                              disabled={busy}
-                              className="text-xs text-red-500 hover:underline"
-                            >
-                              löschen
-                            </button>
+                            {isAdmin && (
+                              <button
+                                onClick={() => deleteMatch(m.id)}
+                                disabled={busy}
+                                className="text-xs text-red-500 hover:underline"
+                              >
+                                löschen
+                              </button>
+                            )}
                           </div>
                         );
                       })}
