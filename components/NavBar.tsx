@@ -4,7 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAdmin } from "@/lib/useAdmin";
 
-const links = [
+const publicLinks = [
+  { href: "/", label: "Rangliste" },
+  { href: "/verlauf", label: "Verlauf" },
+];
+
+const adminLinks = [
   { href: "/", label: "Rangliste" },
   { href: "/spieltag", label: "Spieltag" },
   { href: "/verlauf", label: "Verlauf" },
@@ -14,6 +19,7 @@ const links = [
 export default function NavBar() {
   const pathname = usePathname();
   const { isAdmin, logout } = useAdmin();
+  const links = isAdmin ? adminLinks : publicLinks;
 
   return (
     <header className="bg-court text-white shadow">
