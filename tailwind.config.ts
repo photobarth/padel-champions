@@ -6,8 +6,8 @@ const config: Config = {
     extend: {
       colors: {
         court: {
-          DEFAULT: "#1b6b4a",
-          light: "#e8f5ee",
+          DEFAULT: "#E30513",
+          light: "#fce8e9",
         },
       },
     },
