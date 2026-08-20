@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAdmin } from "@/lib/useAdmin";
-import type { GameDay, Match, MatchPlayer, Player } from "@/lib/types";
+import type { Gender, GameDay, Match, MatchPlayer, Player } from "@/lib/types";
 
 type CourtAssignment = {
   court: number;
@@ -85,14 +85,16 @@ function buildHistory(matches: MatchWithPlayers[], presentIds: string[]) {
 }
 
 /**
- * Plant mehrere Runden im Voraus: verteilt Pausen fair und bildet pro Runde
+ * Plant mehrere Runden im Voraus: verteilt Pausen fair, vermeidet nach
+ * Möglichkeit zwei Männer im selben Team und bildet pro Runde sonst
  * möglichst Teams, die tagsüber noch nicht zusammengespielt haben.
  */
 function planRounds(
   presentIds: string[],
   startRound: number,
   count: number,
-  history: { partnerCount: Map<string, number>; sitOutCount: Map<string, number> }
+  history: { partnerCount: Map<string, number>; sitOutCount: Map<string, number> },
+  genderOf: Map<string, Gender>
 ): RoundPlan[] {
   const partnerCount = new Map(history.partnerCount);
   const sitOutCount = new Map(history.sitOutCount);
@@ -119,12 +121,25 @@ function planRounds(
       used.add(p);
       let bestPartner: string | null = null;
       let bestCount = Infinity;
+      // 1. Versuch: kein Männer-Duo als Team
       for (const q of active) {
         if (used.has(q)) continue;
+        if (genderOf.get(p) === "m" && genderOf.get(q) === "m") continue;
         const cnt = partnerCount.get(pairKey(p, q)) ?? 0;
         if (cnt < bestCount) {
           bestCount = cnt;
           bestPartner = q;
+        }
+      }
+      // Fallback, falls nur noch Männer übrig sind
+      if (!bestPartner) {
+        for (const q of active) {
+          if (used.has(q)) continue;
+          const cnt = partnerCount.get(pairKey(p, q)) ?? 0;
+          if (cnt < bestCount) {
+            bestCount = cnt;
+            bestPartner = q;
+          }
         }
       }
       if (bestPartner) {
@@ -168,6 +183,7 @@ export default function SpieltagPage() {
   const [allPlayers, setAllPlayers] = useState<Player[]>([]);
   const [presentIds, setPresentIds] = useState<Set<string>>(new Set());
   const [newPlayerName, setNewPlayerName] = useState("");
+  const [newPlayerGender, setNewPlayerGender] = useState<Gender>("w");
   const [matches, setMatches] = useState<MatchWithPlayers[]>([]);
   const [plan, setPlan] = useState<RoundPlan[]>([emptyRoundPlan(1)]);
   const [roundsToPlan, setRoundsToPlan] = useState(1);
@@ -333,7 +349,7 @@ export default function SpieltagPage() {
     setError(null);
     const { data, error } = await supabase
       .from("players")
-      .insert({ name })
+      .insert({ name, gender: newPlayerGender })
       .select("*")
       .single();
     if (error) {
@@ -356,7 +372,10 @@ export default function SpieltagPage() {
     if (presentPlayers.length < 4) return;
     const history = buildHistory(matches, presentPlayers.map((p) => p.id));
     const startRound = plan[0]?.round ?? computeNextRound(matches);
-    setPlan(planRounds(presentPlayers.map((p) => p.id), startRound, Math.max(1, roundsToPlan), history));
+    const genderOf = new Map(presentPlayers.map((p) => [p.id, p.gender] as const));
+    setPlan(
+      planRounds(presentPlayers.map((p) => p.id), startRound, Math.max(1, roundsToPlan), history, genderOf)
+    );
   }
 
   function resetPlan() {
@@ -555,6 +574,14 @@ export default function SpieltagPage() {
                   placeholder="Kurzfristiger neuer Spieler…"
                   className="flex-1 rounded-md border px-3 py-2 text-sm"
                 />
+                <select
+                  value={newPlayerGender}
+                  onChange={(e) => setNewPlayerGender(e.target.value as Gender)}
+                  className="rounded-md border px-2 py-2 text-sm"
+                >
+                  <option value="w">weiblich</option>
+                  <option value="m">männlich</option>
+                </select>
                 <button
                   onClick={addNewPlayer}
                   disabled={busy || !newPlayerName.trim()}
@@ -606,7 +633,8 @@ export default function SpieltagPage() {
             </div>
             <p className="mb-3 text-xs text-gray-400">
               „Teams mischen" berücksichtigt bereits gespielte Runden von heute und versucht, pro Runde
-              möglichst neue Team-Partner zu bilden sowie Pausen fair zu verteilen.
+              möglichst neue Team-Partner zu bilden, Pausen fair zu verteilen und zwei Männer nicht im
+              selben Team spielen zu lassen.
             </p>
 
             {presentPlayers.length < 4 ? (

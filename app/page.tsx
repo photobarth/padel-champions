@@ -64,6 +64,7 @@ export default function RangListePage() {
               <tr className="border-b bg-court-light text-left text-xs uppercase text-gray-600">
                 <th className="px-3 py-2">Rang</th>
                 <th className="px-3 py-2">Name</th>
+                <th className="px-3 py-2 text-center">Spieltage</th>
                 <th className="px-3 py-2 text-center">Sp</th>
                 <th className="px-3 py-2 text-center">S</th>
                 <th className="px-3 py-2 text-center">U</th>
@@ -71,6 +72,7 @@ export default function RangListePage() {
                 <th className="px-3 py-2 text-center">Punkte</th>
                 <th className="px-3 py-2 text-center">Diff</th>
                 <th className="px-3 py-2 text-center font-bold">Pkt</th>
+                <th className="px-3 py-2 text-center">Ø Pkt</th>
               </tr>
             </thead>
             <tbody>
@@ -78,6 +80,7 @@ export default function RangListePage() {
                 <tr key={s.player_id} className={`border-b last:border-0 ${!s.active ? "text-gray-400" : ""}`}>
                   <td className="px-3 py-2 font-medium">{medal(i)}</td>
                   <td className="px-3 py-2">{s.name}</td>
+                  <td className="px-3 py-2 text-center">{s.game_days_played ?? "–"}</td>
                   <td className="px-3 py-2 text-center">{s.games_played}</td>
                   <td className="px-3 py-2 text-center">{s.wins}</td>
                   <td className="px-3 py-2 text-center">{s.draws}</td>
@@ -89,6 +92,9 @@ export default function RangListePage() {
                     {s.diff > 0 ? `+${s.diff}` : s.diff}
                   </td>
                   <td className="px-3 py-2 text-center text-base font-bold text-court">{s.points}</td>
+                  <td className="px-3 py-2 text-center text-gray-600">
+                    {typeof s.avg_points === "number" ? s.avg_points.toFixed(2) : "–"}
+                  </td>
                 </tr>
               ))}
             </tbody>

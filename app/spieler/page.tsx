@@ -3,13 +3,14 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAdmin } from "@/lib/useAdmin";
-import type { Player } from "@/lib/types";
+import type { Gender, Player } from "@/lib/types";
 
 export default function SpielerPage() {
   const { isAdmin } = useAdmin();
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
   const [newName, setNewName] = useState("");
+  const [newGender, setNewGender] = useState<Gender>("w");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -33,7 +34,7 @@ export default function SpielerPage() {
     if (!name) return;
     setBusy(true);
     setError(null);
-    const { error } = await supabase.from("players").insert({ name });
+    const { error } = await supabase.from("players").insert({ name, gender: newGender });
     if (error) setError(error.message);
     else {
       setNewName("");
@@ -70,6 +71,14 @@ export default function SpielerPage() {
             placeholder="Neuer Spieler…"
             className="flex-1 rounded-md border px-3 py-2 text-sm"
           />
+          <select
+            value={newGender}
+            onChange={(e) => setNewGender(e.target.value as Gender)}
+            className="rounded-md border px-2 py-2 text-sm"
+          >
+            <option value="w">weiblich</option>
+            <option value="m">männlich</option>
+          </select>
           <button
             onClick={addPlayer}
             disabled={busy || !newName.trim()}
@@ -86,7 +95,9 @@ export default function SpielerPage() {
         <ul className="divide-y rounded-lg border bg-white shadow-sm">
           {players.map((p) => (
             <li key={p.id} className="flex items-center justify-between px-4 py-3">
-              <span className={p.active ? "" : "text-gray-400 line-through"}>{p.name}</span>
+              <span className={p.active ? "" : "text-gray-400 line-through"}>
+                {p.name} <span className="text-xs text-gray-400">({p.gender === "m" ? "m" : "w"})</span>
+              </span>
               {isAdmin && (
                 <button
                   onClick={() => toggleActive(p)}

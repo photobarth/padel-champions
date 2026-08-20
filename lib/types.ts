@@ -1,7 +1,10 @@
+export type Gender = "m" | "w";
+
 export type Player = {
   id: string;
   name: string;
   active: boolean;
+  gender: Gender;
   created_at: string;
 };
 
@@ -31,7 +34,9 @@ export type Standing = {
   player_id: string;
   name: string;
   active: boolean;
+  gender: Gender;
   games_played: number;
+  game_days_played: number;
   points: number;
   wins: number;
   draws: number;
@@ -39,4 +44,5 @@ export type Standing = {
   goals_for: number;
   goals_against: number;
   diff: number;
+  avg_points: number;
 };

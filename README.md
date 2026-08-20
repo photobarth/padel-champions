@@ -17,6 +17,11 @@ Gruppe rund um Rivella. Läuft unter `rivellapadelchampions.photobarth.ch`.
   pro Team.
 - Tordifferenz = Summe (eigene Punkte − gegnerische Punkte) über alle Spiele.
   Bei Punktgleichstand entscheidet die Differenz.
+- Die Rangliste zeigt zusätzlich Durchschnittspunkte pro Spiel (Ø Pkt) und
+  die Anzahl besuchter Spieltage – so lassen sich Spieler mit
+  unterschiedlich vielen Einsätzen fair vergleichen.
+- Beim "Teams mischen" spielen zwei Männer nach Möglichkeit nicht im
+  selben Team (dafür wird das Geschlecht pro Spieler erfasst).
 
 ## Setup
 
@@ -25,7 +30,11 @@ Gruppe rund um Rivella. Läuft unter `rivellapadelchampions.photobarth.ch`.
 1. Im Supabase SQL Editor das Skript [`supabase/schema.sql`](supabase/schema.sql)
    ausführen. Es legt das Schema `padel` mit allen Tabellen, der
    `standings`-View, RLS-Policies und den bekannten Stammspielern an.
-2. Unter **Project Settings → Data API → Exposed schemas** das Schema
+2. Danach die weiteren, nummerierten Migrationsdateien im Ordner
+   [`supabase/`](supabase) der Reihe nach ausführen (`002_...`, `003_...`,
+   `004_...`, …) – sie ergänzen z. B. den Ergebnis-Import, das Geschlecht
+   pro Spieler und die Durchschnittspunkte-/Spieltage-Spalten.
+3. Unter **Project Settings → Data API → Exposed schemas** das Schema
    `padel` zur Liste hinzufügen (standardmässig ist nur `public` freigegeben).
    Ohne diesen Schritt kann die App nicht auf die Tabellen zugreifen.
 
