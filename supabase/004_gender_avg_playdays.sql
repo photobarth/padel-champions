@@ -13,7 +13,11 @@ alter table padel.players alter column gender set not null;
 alter table padel.legacy_stats add column if not exists days int not null default 0;
 
 -- Rangliste-View: Durchschnittspunkte + Spieltage ergänzen -------------------
-create or replace view padel.standings
+-- (drop statt "create or replace", da Postgres bei CREATE OR REPLACE VIEW
+-- keine neuen Spalten mitten in der bestehenden Spaltenreihenfolge zulässt)
+drop view if exists padel.standings;
+
+create view padel.standings
 with (security_invoker = true) as
 with per_match as (
   select
